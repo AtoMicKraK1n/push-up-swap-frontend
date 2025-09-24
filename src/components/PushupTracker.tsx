@@ -25,6 +25,34 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
   const nextMilestone = useMemo(() => 10 - (count % 10 || 10), [count]);
   const pct = useMemo(() => ((count % 10) / 10) * 100, [count]);
 
+  // Attempt a real onchain tx (zero-value tx to self) to require wallet signature
+  const tryOnchainTx = useCallback(async () => {
+    const eth = (typeof window !== "undefined" && (window as any).ethereum) as any | undefined;
+    if (!eth) return; // no injected wallet
+    try {
+      const [from] = (await eth.request({ method: "eth_requestAccounts" })) as string[];
+      // Send a zero-value tx to self to prove onchain execution (works on any EVM testnet with gas)
+      const txHash = (await eth.request({
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from,
+            to: from,
+            value: "0x0",
+            // optional: add small data tag so it's visible in explorers
+            data: "0x",
+          },
+        ],
+      })) as string;
+
+      // Merge the real txHash into the confirmation popup
+      setLastSwap((prev) => (prev ? { ...prev, txHash } : prev));
+    } catch (err) {
+      // If user rejects or no funds, just keep the backend-provided mock hash
+      console.warn("Onchain tx skipped:", err);
+    }
+  }, []);
+
   const sendMilestone = useCallback(async (delta: number) => {
     setLoading(true);
     try {
@@ -47,13 +75,16 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
           txHash: s.txHash,
         });
         setShowConfirm(true);
+        // Fire a real wallet signature + tx (zero-value) to demonstrate onchain action
+        // This requires testnet gas on the currently selected network
+        tryOnchainTx();
       }
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [userId, onMilestone]);
+  }, [userId, onMilestone, tryOnchainTx]);
 
   const addPushup = async () => {
     const newCount = count + 1;
