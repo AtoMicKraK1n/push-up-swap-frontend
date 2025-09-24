@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { addMilestone } from "@/lib/mockDB";
+import { getSafeBlockNumber, getMonadRpcUrl } from "@/lib/rpc";
 
 export async function POST(req: Request) {
   try {
@@ -13,7 +14,11 @@ export async function POST(req: Request) {
     // Verify event (mock), log, and execute contract (mock)
     const result = addMilestone({ userId, pushupsDelta });
 
-    return NextResponse.json({ ok: true, ...result });
+    // Access Monad RPC via ethers (Alchemy URL if provided) — no Ethereum fallback
+    const monadBlockNumber = await getSafeBlockNumber();
+    const rpcConfigured = Boolean(getMonadRpcUrl());
+
+    return NextResponse.json({ ok: true, ...result, rpc: { rpcConfigured, monadBlockNumber } });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "Unknown error" }, { status: 500 });
   }

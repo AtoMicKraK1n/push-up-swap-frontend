@@ -80,23 +80,11 @@ export default function WalletConnectMock({ onConnect, onDisconnect }: WalletCon
       setAddress(a);
       if (a) onConnect?.(a);
 
-      let cid = await provider.request({ method: "eth_chainId" });
+      const cid = await provider.request({ method: "eth_chainId" });
       if (cid) setChainId(String(cid));
 
-      // Ensure Monad network (chainId 10143)
-      if (!isMonadChain(cid)) {
-        try {
-          await provider.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: MONAD_CHAIN_ID_HEX }],
-          });
-          cid = await provider.request({ method: "eth_chainId" });
-          if (cid) setChainId(String(cid));
-        } catch (err: any) {
-          // If the chain hasn't been added to the wallet (error code 4902),
-          // we skip silent add to avoid guessing RPC details. User can add Monad manually.
-        }
-      }
+      // Do not attempt to switch networks automatically. We never fall back to Ethereum.
+      // Display current chain status; user can switch to Monad manually in their wallet if desired.
     } catch (e) {
       // ignore
     }
