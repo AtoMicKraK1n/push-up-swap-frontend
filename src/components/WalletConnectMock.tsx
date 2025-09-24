@@ -18,6 +18,13 @@ function getInjectedProvider(): any | null {
   return ethereum || null;
 }
 
+// Monad chain constants
+const MONAD_CHAIN_ID_HEX = "0x279f"; // 10143
+
+function isMonadChain(id: string | null) {
+  return (id || "").toLowerCase() === MONAD_CHAIN_ID_HEX;
+}
+
 export default function WalletConnectMock({ onConnect, onDisconnect }: WalletConnectMockProps) {
   const [address, setAddress] = useState<string | null>(null);
   const [chainId, setChainId] = useState<string | null>(null);
@@ -72,8 +79,24 @@ export default function WalletConnectMock({ onConnect, onDisconnect }: WalletCon
       const a = accounts?.[0] ?? null;
       setAddress(a);
       if (a) onConnect?.(a);
-      const cid = await provider.request({ method: "eth_chainId" });
+
+      let cid = await provider.request({ method: "eth_chainId" });
       if (cid) setChainId(String(cid));
+
+      // Ensure Monad network (chainId 10143)
+      if (!isMonadChain(cid)) {
+        try {
+          await provider.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: MONAD_CHAIN_ID_HEX }],
+          });
+          cid = await provider.request({ method: "eth_chainId" });
+          if (cid) setChainId(String(cid));
+        } catch (err: any) {
+          // If the chain hasn't been added to the wallet (error code 4902),
+          // we skip silent add to avoid guessing RPC details. User can add Monad manually.
+        }
+      }
     } catch (e) {
       // ignore
     }
@@ -93,7 +116,7 @@ export default function WalletConnectMock({ onConnect, onDisconnect }: WalletCon
         {hasProvider ? (
           <span>
             {walletName ? `${walletName} • ` : ""}
-            {chainId ? `Chain ${chainId}` : "Unknown chain"}
+            {chainId ? (isMonadChain(chainId) ? "Monad" : `Chain ${chainId}`) : "Unknown chain"}
           </span>
         ) : (
           <span>No EVM provider detected</span>
