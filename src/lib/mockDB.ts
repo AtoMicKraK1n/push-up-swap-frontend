@@ -106,3 +106,35 @@ export function addMilestone({ userId = "demo", pushupsDelta = 10 }: { userId?: 
     stats: { ...user },
   };
 }
+
+// Append a swap record (used after client sends 0x tx)
+export function addSwapRecord({
+  userId = "demo",
+  monadAmount,
+  usdcAmount,
+  rate,
+  txHash,
+}: {
+  userId?: string;
+  monadAmount: number;
+  usdcAmount: number;
+  rate: number;
+  txHash: string;
+}) {
+  const user = getUser(userId);
+  // Update balances
+  user.monadBalance = Math.max(0, user.monadBalance - monadAmount);
+  user.usdcBalance += usdcAmount;
+
+  const rec: SwapRecord = {
+    id: state.nextSwapId++,
+    userId,
+    timestamp: Date.now(),
+    monadAmount,
+    usdcAmount,
+    rate,
+    txHash,
+  };
+  state.swaps.push(rec);
+  return rec;
+}
