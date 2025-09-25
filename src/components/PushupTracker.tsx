@@ -71,6 +71,11 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
       }
 
       const [from] = (await eth.request({ method: "eth_requestAccounts" })) as string[];
+      // Ensure the tx actually broadcasts and consumes gas on Monad:
+      // - fetch gas price
+      // - include minimal gas limit
+      // - include a 1-byte data payload to avoid client optimizations
+      const gasPrice = (await eth.request({ method: "eth_gasPrice" })) as string;
       const txHash = (await eth.request({
         method: "eth_sendTransaction",
         params: [
@@ -78,7 +83,9 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
             from,
             to: from,
             value: "0x0",
-            data: "0x",
+            data: "0x01",
+            gas: "0x5208", // 21000
+            gasPrice,
           },
         ],
       })) as string;
@@ -173,6 +180,16 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
                 <div className="flex justify-between"><span>To (USDC)</span><span className="font-medium">{lastSwap.usdcAmount}</span></div>
                 <div className="flex justify-between"><span>Rate</span><span className="font-medium">{lastSwap.rate} USDC / MONAD</span></div>
                 <div className="truncate"><span className="text-muted-foreground">Tx:</span> <span className="font-mono">{lastSwap.txHash}</span></div>
+                {lastSwap.txHash && (
+                  <a
+                    href={`https://testnet.monadscan.org/tx/${lastSwap.txHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    View on MonadScan
+                  </a>
+                )}
               </div>
               <div className="mt-4 flex justify-end">
                 <Button onClick={() => setShowConfirm(false)}>Got it</Button>
