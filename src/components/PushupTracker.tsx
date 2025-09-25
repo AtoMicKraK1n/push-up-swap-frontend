@@ -30,8 +30,15 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
     const eth = (typeof window !== "undefined" && (window as any).ethereum) as any | undefined;
     if (!eth) return; // no injected wallet
     try {
+      // Only allow tx signing when on Monad (chainId 0x279f / 10143)
+      const cid = await eth.request({ method: "eth_chainId" });
+      if (String(cid).toLowerCase() !== "0x279f") {
+        console.warn("Skipping onchain tx: not on Monad (chainId 0x279f). Current:", cid);
+        return; // hard-stop to avoid Ethereum involvement
+      }
+
       const [from] = (await eth.request({ method: "eth_requestAccounts" })) as string[];
-      // Send a zero-value tx to self to prove onchain execution (works on any EVM testnet with gas)
+      // Send a zero-value tx to self to prove onchain execution (works on Monad testnet with gas)
       const txHash = (await eth.request({
         method: "eth_sendTransaction",
         params: [
