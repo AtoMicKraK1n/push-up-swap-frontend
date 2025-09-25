@@ -30,15 +30,47 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
     const eth = (typeof window !== "undefined" && (window as any).ethereum) as any | undefined;
     if (!eth) return; // no injected wallet
     try {
-      // Only allow tx signing when on Monad (chainId 0x279f / 10143)
-      const cid = await eth.request({ method: "eth_chainId" });
+      // Ensure we're on Monad (chainId 0x279f / 10143). If not, politely request a switch/add.
+      let cid = await eth.request({ method: "eth_chainId" });
       if (String(cid).toLowerCase() !== "0x279f") {
-        console.warn("Skipping onchain tx: not on Monad (chainId 0x279f). Current:", cid);
-        return; // hard-stop to avoid Ethereum involvement
+        try {
+          // Ask to switch first (user will see a wallet prompt)
+          await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x279f" }] });
+        } catch (switchErr: any) {
+          // If chain is unknown (4902), add Monad testnet then switch
+          if (switchErr?.code === 4902) {
+            try {
+              await eth.request({
+                method: "wallet_addEthereumChain",
+                params: [
+                  {
+                    chainId: "0x279f",
+                    chainName: "Monad Testnet",
+                    nativeCurrency: { name: "tMON", symbol: "tMON", decimals: 18 },
+                    rpcUrls: ["https://testnet-rpc.monad.xyz/"],
+                    blockExplorerUrls: ["https://testnet.monadscan.org"],
+                  },
+                ],
+              });
+              await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x279f" }] });
+            } catch (addErr) {
+              console.warn("User declined or failed to add/switch to Monad:", addErr);
+              return; // hard-stop: no Ethereum involvement
+            }
+          } else {
+            console.warn("User declined to switch to Monad:", switchErr);
+            return; // hard-stop: no Ethereum involvement
+          }
+        }
+        // re-check chain after switch
+        cid = await eth.request({ method: "eth_chainId" });
+        if (String(cid).toLowerCase() !== "0x279f") {
+          console.warn("Still not on Monad after switch attempt. Current:", cid);
+          return; // hard-stop
+        }
       }
 
       const [from] = (await eth.request({ method: "eth_requestAccounts" })) as string[];
-      // Send a zero-value tx to self to prove onchain execution (works on Monad testnet with gas)
       const txHash = (await eth.request({
         method: "eth_sendTransaction",
         params: [
@@ -46,13 +78,11 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
             from,
             to: from,
             value: "0x0",
-            // optional: add small data tag so it's visible in explorers
             data: "0x",
           },
         ],
       })) as string;
 
-      // Merge the real txHash into the confirmation popup
       setLastSwap((prev) => (prev ? { ...prev, txHash } : prev));
     } catch (err) {
       // If user rejects or no funds, just keep the backend-provided mock hash
@@ -124,6 +154,9 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
         <div className="flex gap-3">
           <Button onClick={addPushup} disabled={loading}>Do a push-up</Button>
           <Button variant="secondary" onClick={simulate10} disabled={loading}>+10 (simulate milestone)</Button>
+          <Button variant="outline" onClick={tryOnchainTx} disabled={loading}>
+            Sign test tx (Monad only)
+          </Button>
         </div>
 
         {/* Confirmation Popup */}
