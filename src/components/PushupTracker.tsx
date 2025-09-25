@@ -21,6 +21,7 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
     rate: number;
     txHash: string;
   } | null>(null);
+  const [txError, setTxError] = useState<string | null>(null);
 
   const nextMilestone = useMemo(() => 10 - (count % 10 || 10), [count]);
   const pct = useMemo(() => ((count % 10) / 10) * 100, [count]);
@@ -30,6 +31,7 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
     const eth = (typeof window !== "undefined" && (window as any).ethereum) as any | undefined;
     if (!eth) return; // no injected wallet
     try {
+      setTxError(null);
       // Ensure we're on Monad (chainId 0x279f / 10143). If not, politely request a switch/add.
       let cid = await eth.request({ method: "eth_chainId" });
       if (String(cid).toLowerCase() !== "0x279f") {
@@ -55,10 +57,12 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
               await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x279f" }] });
             } catch (addErr) {
               console.warn("User declined or failed to add/switch to Monad:", addErr);
+              setTxError("Please switch to Monad Testnet (10143) to send the transaction.");
               return; // hard-stop: no Ethereum involvement
             }
           } else {
             console.warn("User declined to switch to Monad:", switchErr);
+            setTxError("Switch to Monad Testnet (10143) to proceed.");
             return; // hard-stop: no Ethereum involvement
           }
         }
@@ -66,33 +70,70 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
         cid = await eth.request({ method: "eth_chainId" });
         if (String(cid).toLowerCase() !== "0x279f") {
           console.warn("Still not on Monad after switch attempt. Current:", cid);
+          setTxError("Still not on Monad after switch attempt.");
           return; // hard-stop
         }
       }
 
       const [from] = (await eth.request({ method: "eth_requestAccounts" })) as string[];
-      // Ensure the tx actually broadcasts and consumes gas on Monad:
-      // - fetch gas price
-      // - include minimal gas limit
-      // - include a 1-byte data payload to avoid client optimizations
-      const gasPrice = (await eth.request({ method: "eth_gasPrice" })) as string;
-      const txHash = (await eth.request({
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from,
-            to: from,
-            value: "0x0",
-            data: "0x01",
-            gas: "0x5208", // 21000
-            gasPrice,
-          },
-        ],
-      })) as string;
 
-      setLastSwap((prev) => (prev ? { ...prev, txHash } : prev));
-    } catch (err) {
-      // If user rejects or no funds, just keep the backend-provided mock hash
+      // First attempt: minimal params and let wallet/provider fill fees
+      const baseTx = {
+        from,
+        // Send to burn address to avoid provider self-transfer optimizations
+        to: "0x000000000000000000000000000000000000dEaD",
+        value: "0x1", // 1 wei to force nonce/balance change
+      } as const;
+
+      let txHash: string | undefined;
+      try {
+        txHash = (await eth.request({
+          method: "eth_sendTransaction",
+          params: [baseTx],
+        })) as string;
+      } catch (primaryErr: any) {
+        // Retry with estimated gas and tiny data payload (some providers require it)
+        try {
+          const retryTx = {
+            ...baseTx,
+            data: "0x01",
+          } as const;
+          const estimatedGas = (await eth.request({
+            method: "eth_estimateGas",
+            params: [retryTx],
+          })) as string;
+
+          try {
+            txHash = (await eth.request({
+              method: "eth_sendTransaction",
+              params: [{ ...retryTx, gas: estimatedGas }],
+            })) as string;
+          } catch (secondaryErr: any) {
+            // Final fallback: include gasPrice explicitly for non-EIP-1559 providers
+            const gasPrice = (await eth.request({ method: "eth_gasPrice" })) as string;
+            txHash = (await eth.request({
+              method: "eth_sendTransaction",
+              params: [{ ...retryTx, gas: estimatedGas, gasPrice }],
+            })) as string;
+          }
+        } catch (retryFlowErr: any) {
+          throw retryFlowErr;
+        }
+      }
+
+      if (txHash) {
+        setLastSwap((prev) =>
+          prev
+            ? { ...prev, txHash }
+            : { monadAmount: 0, usdcAmount: 0, rate: 0, txHash }
+        );
+        setShowConfirm(true);
+      }
+    } catch (err: any) {
+      // If user rejects or no funds, surface error to UI
+      const msg = err?.message || err?.data?.message || String(err);
+      setTxError(msg);
+      console.error("Onchain tx failed (final):", err);
       console.warn("Onchain tx skipped:", err);
     }
   }, []);
@@ -165,6 +206,11 @@ export default function PushupTracker({ userId, onMilestone }: PushupTrackerProp
             Sign test tx (Monad only)
           </Button>
         </div>
+        {txError && (
+          <div className="text-xs text-red-600 dark:text-red-400">
+            {txError}
+          </div>
+        )}
 
         {/* Confirmation Popup */}
         {showConfirm && lastSwap && (
